@@ -65,7 +65,28 @@ The error formats seen: `details.message`, `message + field + detail[]`, `messag
 **Improve:** generate the docs from an OpenAPI spec, fill the Errors page, add `llms.txt` and pre-rendering, test the examples in CI, keep a changelog, add PowerShell snippets and a "which endpoint" guide.
 
 ## MCP
-**Tried:** every tool (`env_params`, `heatmap`/`heatmap_read`, `satellite`, `streetview`, `temperature_routing`/`_read`, `report`/`report_read`, `credit_balance`), using a raw JSON-RPC client I wrote and [AI client].
+**Tried:**
+- **In Claude Code (VS Code):** connected with `claude mcp add --transport http`, then ran 5 prompts (below).
+- **With a raw JSON-RPC client I wrote:** every tool, including `satellite`, `streetview`, routing and `report`, plus bad-input tests.
+
+**Setup:** one command, connected first try (`/mcp` shows ✓ connected). One catch: `claude mcp add` defaults to *local* scope, so the server only appeared in the folder where I ran it. The docs don't mention `--scope user`.
+
+**Claude Code session**
+
+| # | Prompt | What happened |
+|---|---|---|
+| 1 | "What FortyGuard tools do you have, and what's my credit balance?" | Called `credit_balance` (911,340) and listed the tools. `/mcp` shows **11 tools** (docs say 9). Claude itself said "8 tools". ![tools](screenshots/tools.png) ![balance](screenshots/1.png) |
+| 2 | "Get the environmental conditions for Phoenix on 20 Sept 2025, reference temp 35°C" | Showed the parameters and cost, **asked to confirm**, then called `env_params` (2,900 credits). ![env](screenshots/2.png) |
+| 3 | "Make a heatmap of downtown Phoenix, 15 July 2025 2pm, give min/max/mean" | Asked to confirm (4,220), submitted, then **polled `heatmap_read` 3 times on its own** until done. Min 39.63 / max 39.79 / mean 39.71 °C. |
+| 4 | "What's my credit balance?" | Answered from memory (911,340) without re-calling the tool. ![credit](screenshots/credit.png) |
+| 5 | "Make a heat map of London for 15 July 2025" | Refused with no tool call and no cost: "only supports the United States". ![london](screenshots/edge-case.png) |
+
+**What I noticed in the session**
+- The confirm-before-paying design works as intended, and no credits were spent without my "yes".
+- The cost shown for `env_params` was a **range (2,110–2,900)**, because tool descriptions list prices for every plan and the AI can't tell which one applies to the user. Return the user's exact price.
+- Asking for a **full day** returned a single **midnight snapshot** as the summary (apparent temp 34.0 °C), while the hourly data peaked at 39.7 °C at 14:00. Claude labelled it "Daily Averages (snapshot at midnight)", which is contradictory. A full-day request should return a real daily summary (min/max/mean).
+- The London refusal came from the tool *descriptions* (Claude never called the server), which is fast and free, but it means the server's own `OUT_OF_COVERAGE` error never reached the user.
+- No `wait_for_completion`, so the AI burned several round trips polling (see Issues).
 
 **Good:**
 - Connected on the first try.
@@ -88,7 +109,7 @@ The error formats seen: `details.message`, `message + field + detail[]`, `messag
 ## Data quality
 - Street View in downtown Phoenix returned an **indoor 2015 photo** (sofa, ceiling, cabinet), with no warning.
 - Satellite segmentation returns `sky` and `skyscraper` classes, which suggests a street-level model used on aerial images.
-- The heatmap spread was only ±0.03 °C across a 1 km² downtown area. Worth confirming this is expected.
+- **Heatmaps look almost flat.** A ~1 km² area gave a ±0.03 °C spread (REST). A larger ~3.4 km² downtown area gave only **0.16 °C** between min and max (39.63–39.79 °C, via Claude Code). Real downtown heat varies by several degrees (asphalt vs parks vs shade), so this is worth confirming, since it is the product's core claim.
 
 ## Scalability
 **Risks:**
